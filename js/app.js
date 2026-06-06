@@ -1,10 +1,10 @@
-/* ── 韓文學習 PWA · 主邏輯 ── */
+/* ── 韓文學習 PWA · 主邏輯（階段式解鎖框架） ── */
 (function () {
   "use strict";
 
-  // ───────── 進度 (localStorage) ─────────
-  const STORE_KEY = "hangul_progress_v1";
-  const TOTAL_LETTERS = ALL_LETTERS.length; // 40
+  // ───────── 進度 (localStorage, v2 per-stage) ─────────
+  const STORE_KEY = "hangul_progress_v2";
+  const STORE_KEY_V1 = "hangul_progress_v1";
 
   function today() {
     const d = new Date();
@@ -16,18 +16,44 @@
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
   }
 
+  function blankState() {
+    return {
+      v: 2,
+      currentStage: 1,
+      stages: {}, // { [id]: { learned: [], bestPct: 0 } }
+      streak: 0, lastActiveDate: null, secondsToday: 0, secondsDate: null,
+    };
+  }
+
   function loadState() {
-    let s;
-    try { s = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { s = {}; }
-    return Object.assign(
-      { learned: [], bestScore: 0, streak: 0, lastActiveDate: null, secondsToday: 0, secondsDate: null },
-      s
-    );
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(STORE_KEY)); } catch (e) {}
+    if (s && s.v === 2) return Object.assign(blankState(), s);
+
+    // 從 v1 遷移（保留學過字母 + 打卡 + 今日時數；舊的 raw 分數無法轉百分比，bestPct 從 0 起算）
+    const base = blankState();
+    try {
+      const old = JSON.parse(localStorage.getItem(STORE_KEY_V1));
+      if (old) {
+        base.stages["1"] = { learned: Array.isArray(old.learned) ? old.learned : [], bestPct: 0 };
+        base.streak = old.streak || 0;
+        base.lastActiveDate = old.lastActiveDate || null;
+        base.secondsToday = old.secondsToday || 0;
+        base.secondsDate = old.secondsDate || null;
+      }
+    } catch (e) {}
+    return base;
   }
   function saveState() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
   }
   let state = loadState();
+
+  function stageState(id) {
+    const k = String(id);
+    if (!state.stages[k]) state.stages[k] = { learned: [], bestPct: 0 };
+    return state.stages[k];
+  }
 
   // 進入 app：登記今天活躍、處理 streak + 今日秒數重置
   function markActiveToday() {
@@ -41,13 +67,34 @@
     saveState();
   }
 
-  function markLearned(ch) {
-    if (!state.learned.includes(ch)) {
-      state.learned.push(ch);
+  function markLearned(stageId, key) {
+    const ss = stageState(stageId);
+    if (!ss.learned.includes(key)) {
+      ss.learned.push(key);
       saveState();
-      renderProgress();
       renderHome();
+      renderProgress();
     }
+  }
+
+  // ───────── 解鎖判斷 ─────────
+  function stageDef(id) { return STAGES.find((s) => s.id === id); }
+  function isUnlocked(id) {
+    const def = stageDef(id);
+    if (!def || !def.unlockBy) return true; // Stage 1 永遠開放
+    const prev = stageState(def.unlockBy.stage);
+    return prev.bestPct >= def.unlockBy.minPct;
+  }
+  function hasContent(id) {
+    const def = stageDef(id);
+    return def && !def.locked;
+  }
+  function stageItemKeys(id) { return STAGE_ITEM_KEYS[id] || []; }
+  function stageLearnedCount(id) {
+    const keys = stageItemKeys(id);
+    if (!keys.length) return 0;
+    const set = new Set(stageState(id).learned);
+    return keys.filter((k) => set.has(k)).length;
   }
 
   // 計時：頁面可見時每秒累加，每 10 秒寫入一次
@@ -92,47 +139,127 @@
     synth.speak(u);
   }
 
-  // ───────── 導覽 ─────────
+  // ───────── 導覽（底部 tabbar 依當前階段動態產生） ─────────
   const tabbar = document.getElementById("tabbar");
+  const FIXED_HOME = { view: "home", icon: "🏠", label: "首頁" };
+  const FIXED_PROGRESS = { view: "progress", icon: "📊", label: "進度" };
+  let currentView = "home";
+
+  function renderTabbar() {
+    const def = stageDef(state.currentStage) || STAGES[0];
+    const tabs = [FIXED_HOME, ...(def.tabs || []), FIXED_PROGRESS];
+    tabbar.innerHTML = "";
+    tabs.forEach((t) => {
+      const b = document.createElement("button");
+      b.dataset.view = t.view;
+      b.className = t.view === currentView ? "active" : "";
+      b.innerHTML = `<span class="ic">${t.icon}</span>${t.label}`;
+      b.addEventListener("click", () => showView(t.view));
+      tabbar.appendChild(b);
+    });
+  }
+
   function showView(name) {
+    currentView = name;
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     const el = document.getElementById("view-" + name);
     if (el) el.classList.add("active");
     tabbar.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
     window.scrollTo({ top: 0, behavior: "smooth" });
+    if (name === "quiz") startRound(); // 進測驗 = 開新一輪
   }
-  tabbar.addEventListener("click", (e) => {
-    const b = e.target.closest("button");
-    if (b) showView(b.dataset.view);
-  });
 
-  // ───────── 首頁 ─────────
-  const groupGrid = document.getElementById("groupGrid");
+  // 進入某階段：切換 currentStage、重建 tabbar、跳到該階段第一個子頁
+  function enterStage(id) {
+    if (!isUnlocked(id)) { flashLockedToast(id); return; }
+    if (!hasContent(id)) { flashComingSoon(id); return; }
+    state.currentStage = id;
+    saveState();
+    const def = stageDef(id);
+    renderStageContent(id);
+    renderTabbar();
+    showView(def.tabs[0].view);
+  }
+
+  function renderStageContent(id) {
+    if (id === 1) { renderTabs(); renderLetterGrid(); }
+    else if (id === 2) { renderVocab(); renderNumbers(); }
+  }
+
+  // ───────── 首頁：總覽 hero + 關卡地圖 ─────────
+  const stageMap = document.getElementById("stageMap");
+
+  function totalItems() {
+    return STAGES.filter((s) => hasContent(s.id)).reduce((n, s) => n + stageItemKeys(s.id).length, 0);
+  }
+  function totalLearned() {
+    return STAGES.filter((s) => hasContent(s.id)).reduce((n, s) => n + stageLearnedCount(s.id), 0);
+  }
+  function bestPctAll() {
+    return Math.max(0, ...STAGES.map((s) => stageState(s.id).bestPct));
+  }
+
   function renderHome() {
     document.getElementById("homeMinutes").textContent = Math.floor(state.secondsToday / 60);
     document.getElementById("homeStreak").textContent = state.streak;
-    const learnedCount = state.learned.length;
-    document.getElementById("homeProgress").style.width = Math.round((learnedCount / TOTAL_LETTERS) * 100) + "%";
-    document.getElementById("homeLearned").textContent = `已學 ${learnedCount} / ${TOTAL_LETTERS} 字母`;
-    document.getElementById("homeBest").textContent = `最佳測驗 ${state.bestScore} 分`;
+    const tot = totalItems(), learned = totalLearned();
+    document.getElementById("homeProgress").style.width = (tot ? Math.round((learned / tot) * 100) : 0) + "%";
+    document.getElementById("homeLearned").textContent = `已學 ${learned} / ${tot} 項`;
+    document.getElementById("homeBest").textContent = `最佳測驗 ${bestPctAll()}%`;
 
-    groupGrid.innerHTML = "";
-    LETTER_GROUPS.forEach((g) => {
-      const done = g.letters.filter((l) => state.learned.includes(l.ch)).length;
-      const pct = Math.round((done / g.letters.length) * 100);
-      const btn = document.createElement("button");
-      btn.className = "group-card g-" + g.id;
-      btn.innerHTML =
-        `<div><div class="gc-ch">${g.letters[0].ch}${g.letters[1] ? g.letters[1].ch : ""}</div>` +
-        `<div class="gc-title">${g.title}</div>` +
-        `<div class="gc-sub">${done}/${g.letters.length} · ${g.subtitle}</div></div>` +
-        `<div class="gc-bar"><i style="width:${pct}%"></i></div>`;
-      btn.addEventListener("click", () => { showView("letters"); selectGroup(g.id); });
-      groupGrid.appendChild(btn);
+    stageMap.innerHTML = "";
+    STAGES.forEach((s) => {
+      const unlocked = isUnlocked(s.id);
+      const content = hasContent(s.id);
+      const keys = stageItemKeys(s.id);
+      const learnedN = stageLearnedCount(s.id);
+      const pct = keys.length ? Math.round((learnedN / keys.length) * 100) : 0;
+      const ss = stageState(s.id);
+
+      const card = document.createElement("button");
+      card.className = "stage-card s" + s.id + (unlocked ? "" : " locked") + (!content ? " soon" : "");
+
+      let status;
+      if (!unlocked) {
+        const by = s.unlockBy;
+        status = `<span class="st-lock">🔒 ${stageDef(by.stage).title}測驗達 ${by.minPct}% 解鎖</span>`;
+      } else if (!content) {
+        status = `<span class="st-soon">內容建置中・即將推出</span>`;
+      } else {
+        status = `<span class="st-meta">已學 ${learnedN}/${keys.length}・最佳測驗 ${ss.bestPct}%</span>`;
+      }
+
+      card.innerHTML =
+        `<div class="sc-badge">${unlocked ? (content ? s.badge : "🛠") : "🔒"}</div>` +
+        `<div class="sc-body">` +
+        `<div class="sc-top"><span class="sc-stage">STAGE ${s.id}</span>` +
+        (unlocked && content && ss.bestPct >= UNLOCK_PCT ? `<span class="sc-pass">✓ 達標</span>` : ``) + `</div>` +
+        `<div class="sc-title">${s.title}</div>` +
+        `<div class="sc-desc">${s.desc}</div>` +
+        (unlocked && content ? `<div class="sc-bar"><i style="width:${pct}%"></i></div>` : ``) +
+        `<div class="sc-status">${status}</div>` +
+        `</div>`;
+      card.addEventListener("click", () => enterStage(s.id));
+      stageMap.appendChild(card);
     });
   }
 
-  // ───────── 字母學習 ─────────
+  let toastTimer = null;
+  function showToast(msg) {
+    let t = document.getElementById("toast");
+    if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; document.body.appendChild(t); }
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  }
+  function flashLockedToast(id) {
+    const by = stageDef(id).unlockBy;
+    showToast(`🔒 先把 ${stageDef(by.stage).title} 測驗練到 ${by.minPct}% 才解鎖喔`);
+  }
+  function flashComingSoon() { showToast("🛠 這一關內容正在建置，敬請期待！"); }
+
+  // ───────── Stage 1：字母學習 ─────────
   const letterTabs = document.getElementById("letterTabs");
   const letterGrid = document.getElementById("letterGrid");
   let currentGroup = LETTER_GROUPS[0].id;
@@ -147,44 +274,43 @@
       letterTabs.appendChild(c);
     });
   }
-  function selectGroup(id) {
-    currentGroup = id;
-    renderTabs();
-    renderLetterGrid();
-  }
+  function selectGroup(id) { currentGroup = id; renderTabs(); renderLetterGrid(); }
   function renderLetterGrid() {
     const g = LETTER_GROUPS.find((x) => x.id === currentGroup);
     letterGrid.innerHTML = "";
     g.letters.forEach((l) => {
       const card = document.createElement("button");
-      card.className = "letter-card" + (state.learned.includes(l.ch) ? " learned" : "");
+      card.className = "letter-card" + (stageState(1).learned.includes(l.ch) ? " learned" : "");
       card.innerHTML = `<span class="lc-ch">${l.ch}</span><span class="lc-rom">${l.rom}</span>`;
       card.addEventListener("click", () => {
         card.classList.add("speaking");
         setTimeout(() => card.classList.remove("speaking"), 400);
         speak(l.say, false);
-        markLearned(l.ch);
-        openSheet(l);
+        markLearned(1, l.ch);
+        openSheet({ ch: l.ch, rom: l.rom, say: l.say });
       });
       letterGrid.appendChild(card);
     });
   }
 
-  // 字母詳情彈窗
+  // 詳情彈窗（字母 / 單字共用）
   const sheet = document.getElementById("sheet");
-  let sheetLetter = null;
-  function openSheet(l) {
-    sheetLetter = l;
-    document.getElementById("sheetCh").textContent = l.ch;
-    document.getElementById("sheetRom").textContent = l.rom;
+  let sheetItem = null;
+  function openSheet(item) {
+    sheetItem = item;
+    document.getElementById("sheetCh").textContent = item.ch;
+    document.getElementById("sheetRom").textContent = item.rom;
+    const zhEl = document.getElementById("sheetZh");
+    if (item.zh) { zhEl.textContent = item.zh; zhEl.style.display = "block"; }
+    else { zhEl.style.display = "none"; }
     sheet.classList.add("show");
   }
   function closeSheet() { sheet.classList.remove("show"); }
   sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); });
-  document.getElementById("sheetSpeak").addEventListener("click", () => sheetLetter && speak(sheetLetter.say, false));
-  document.getElementById("sheetSlow").addEventListener("click", () => sheetLetter && speak(sheetLetter.say, true));
+  document.getElementById("sheetSpeak").addEventListener("click", () => sheetItem && speak(sheetItem.say, false));
+  document.getElementById("sheetSlow").addEventListener("click", () => sheetItem && speak(sheetItem.say, true));
 
-  // ───────── 組合練習 ─────────
+  // ───────── Stage 1：組合練習 ─────────
   const comboConsEl = document.getElementById("comboCons");
   const comboVowEl = document.getElementById("comboVow");
   const comboSyl = document.getElementById("comboSyl");
@@ -235,117 +361,249 @@
     updateCombo();
   });
 
-  // ───────── 測驗 ─────────
-  let quizMode = "see"; // see = 看字選音, hear = 聽音選字
-  let quizSession = { score: 0, total: 0, answered: false, correct: null };
+  // ───────── Stage 2：單字 ─────────
+  const vocabThemes = document.getElementById("vocabThemes");
+  function renderVocab() {
+    vocabThemes.innerHTML = "";
+    const learned = new Set(stageState(2).learned);
+    STAGE2.vocab.forEach((t) => {
+      const sec = document.createElement("div");
+      sec.className = "vocab-theme";
+      sec.innerHTML = `<h4 class="theme-title">${t.emoji} ${t.title}</h4>`;
+      const grid = document.createElement("div");
+      grid.className = "word-grid";
+      t.words.forEach((w) => {
+        const card = document.createElement("button");
+        card.className = "word-card" + (learned.has(w.ko) ? " learned" : "");
+        card.innerHTML = `<span class="wc-ko">${w.ko}</span><span class="wc-zh">${w.zh}</span><span class="wc-rom">${w.rom}</span>`;
+        card.addEventListener("click", () => {
+          card.classList.add("speaking");
+          setTimeout(() => card.classList.remove("speaking"), 400);
+          speak(w.say, false);
+          markLearned(2, w.ko);
+          card.classList.add("learned");
+          openSheet({ ch: w.ko, rom: w.rom, zh: w.zh, say: w.say });
+        });
+        grid.appendChild(card);
+      });
+      sec.appendChild(grid);
+      vocabThemes.appendChild(sec);
+    });
+  }
+
+  // ───────── Stage 2：數字 ─────────
+  function renderNumberGrid(el, list) {
+    const learned = new Set(stageState(2).learned);
+    el.innerHTML = "";
+    list.forEach((n) => {
+      const key = "num:" + n.sys + ":" + n.val;
+      const card = document.createElement("button");
+      card.className = "num-card" + (learned.has(key) ? " learned" : "");
+      card.innerHTML = `<span class="nc-val">${n.val}</span><span class="nc-ko">${n.ko}</span><span class="nc-rom">${n.rom}</span>`;
+      card.addEventListener("click", () => {
+        card.classList.add("speaking");
+        setTimeout(() => card.classList.remove("speaking"), 400);
+        speak(n.say, false);
+        markLearned(2, key);
+        card.classList.add("learned");
+        openSheet({ ch: n.ko, rom: n.rom, zh: n.val, say: n.say });
+      });
+      el.appendChild(card);
+    });
+  }
+  function renderNumbers() {
+    renderNumberGrid(document.getElementById("numSino"), STAGE2.numbers.sino.map((n) => ({ ...n, sys: "sino" })));
+    renderNumberGrid(document.getElementById("numNative"), STAGE2.numbers.native.map((n) => ({ ...n, sys: "native" })));
+  }
+
+  // ───────── 測驗（依當前階段，每輪 10 題，達標解鎖下一階） ─────────
+  const ROUND_LEN = 10;
+  let quizMode = "see"; // see = 看字選意/音, hear = 聽音選字
+  let round = { stage: 1, n: 0, score: 0, item: null, answered: false, finished: false };
+
+  const elQNum = document.getElementById("qNum");
+  const elQLen = document.getElementById("qLen");
+  const elQScore = document.getElementById("qScore");
+  const elQPrompt = document.getElementById("qPrompt");
+  const elQSub = document.getElementById("qSub");
+  const elQOptions = document.getElementById("qOptions");
+  const elQFeedback = document.getElementById("qFeedback");
+  const elQStageLabel = document.getElementById("qStageLabel");
+  const quizPlay = document.getElementById("quizPlay");
+  const quizResult = document.getElementById("quizResult");
 
   function shuffle(arr) {
     const a = arr.slice();
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
     return a;
   }
-  function newQuestion() {
-    quizSession.answered = false;
-    document.getElementById("qNext").disabled = true;
-    document.getElementById("qFeedback").textContent = "";
-    document.getElementById("qFeedback").className = "quiz-feedback";
+  function disp(it, mode) { return mode === "hear" ? it.ch : it.ans; }
+  function pickDistractors(pool, answer, mode) {
+    const seen = new Set([disp(answer, mode)]);
+    const out = [];
+    for (const it of shuffle(pool)) {
+      const d = disp(it, mode);
+      if (seen.has(d)) continue;
+      seen.add(d); out.push(it);
+      if (out.length === 3) break;
+    }
+    return out;
+  }
 
-    const answer = ALL_LETTERS[Math.floor(Math.random() * ALL_LETTERS.length)];
-    quizSession.correct = answer;
-    // 干擾項：同一型態優先（區分 rom 唯一）
-    const pool = ALL_LETTERS.filter((l) => l.ch !== answer.ch);
-    const distractors = shuffle(pool).slice(0, 3);
+  function startRound() {
+    round = { stage: state.currentStage, n: 0, score: 0, item: null, answered: false, finished: false };
+    const def = stageDef(round.stage);
+    elQStageLabel.textContent = `STAGE ${def.id} · ${def.title}`;
+    // 模式按鈕文字依階段微調
+    document.getElementById("modeSee").textContent = round.stage === 1 ? "看字選音" : "看字選意";
+    quizResult.classList.remove("show");
+    quizPlay.style.display = "";
+    elQLen.textContent = ROUND_LEN;
+    newQuestion();
+  }
+
+  function newQuestion() {
+    if (round.n >= ROUND_LEN) return endRound();
+    round.answered = false;
+    document.getElementById("qNext").disabled = true;
+    elQFeedback.textContent = "";
+    elQFeedback.className = "quiz-feedback";
+
+    const items = QUIZ_ITEMS[round.stage];
+    const answer = items[Math.floor(Math.random() * items.length)];
+    round.item = answer;
+    const distractors = pickDistractors(items.filter((l) => l.key !== answer.key), answer, quizMode);
     const options = shuffle([answer, ...distractors]);
 
-    const qPrompt = document.getElementById("qPrompt");
-    const qSub = document.getElementById("qSub");
-    const qOptions = document.getElementById("qOptions");
-    qOptions.innerHTML = "";
-
+    elQOptions.innerHTML = "";
     if (quizMode === "see") {
-      qPrompt.textContent = answer.ch;
-      qPrompt.style.fontSize = "84px";
-      qSub.textContent = "選出正確的羅馬拼音";
+      elQPrompt.textContent = answer.ch;
+      elQPrompt.style.fontSize = round.stage === 1 ? "84px" : "clamp(34px, 11vw, 52px)";
+      elQSub.textContent = round.stage === 1 ? "選出正確的羅馬拼音" : "選出正確的中文意思";
       speak(answer.say, false);
       options.forEach((o) => {
         const b = document.createElement("button");
-        b.className = "opt"; b.textContent = o.rom;
-        b.addEventListener("click", () => answerQuestion(b, o, answer, qOptions));
-        qOptions.appendChild(b);
+        b.className = "opt"; b.textContent = o.ans;
+        if (round.stage === 1) b.style.fontSize = "18px";
+        b.addEventListener("click", () => answerQuestion(b, o, answer, elQOptions));
+        elQOptions.appendChild(b);
       });
     } else {
-      qPrompt.textContent = "🔊";
-      qPrompt.style.fontSize = "60px";
-      qSub.textContent = "聽發音，選出正確的字母";
+      elQPrompt.textContent = "🔊";
+      elQPrompt.style.fontSize = "60px";
+      elQSub.textContent = round.stage === 1 ? "聽發音，選出正確的字母" : "聽發音，選出正確的韓文";
       speak(answer.say, false);
       options.forEach((o) => {
         const b = document.createElement("button");
         b.className = "opt"; b.textContent = o.ch; b.style.fontFamily = "var(--font-kr)";
-        b.addEventListener("click", () => answerQuestion(b, o, answer, qOptions));
-        qOptions.appendChild(b);
+        b.addEventListener("click", () => answerQuestion(b, o, answer, elQOptions));
+        elQOptions.appendChild(b);
       });
     }
-    document.getElementById("qNum").textContent = quizSession.total + 1;
+    elQNum.textContent = round.n + 1;
+    elQScore.textContent = round.score;
   }
+
   function answerQuestion(btn, chosen, answer, container) {
-    if (quizSession.answered) return;
-    quizSession.answered = true;
-    quizSession.total += 1;
-    const fb = document.getElementById("qFeedback");
-    const correct = chosen.ch === answer.ch;
+    if (round.answered) return;
+    round.answered = true;
+    round.n += 1;
+    const correct = chosen.key === answer.key;
     if (correct) {
       btn.classList.add("correct");
-      quizSession.score += 1;
-      fb.textContent = "答對了！ 🎉"; fb.className = "quiz-feedback ok";
+      round.score += 1;
+      elQFeedback.textContent = "答對了！ 🎉"; elQFeedback.className = "quiz-feedback ok";
     } else {
       btn.classList.add("wrong");
-      fb.textContent = `答案是 ${answer.ch}（${answer.rom}）`; fb.className = "quiz-feedback no";
+      elQFeedback.textContent = `答案是 ${answer.ch}（${answer.ans}）`; elQFeedback.className = "quiz-feedback no";
       [...container.children].forEach((c) => {
-        if ((quizMode === "see" && c.textContent === answer.rom) || (quizMode === "hear" && c.textContent === answer.ch))
-          c.classList.add("correct");
+        if (c.textContent === disp(answer, quizMode)) c.classList.add("correct");
       });
     }
     [...container.children].forEach((c) => (c.disabled = true));
-    document.getElementById("qScore").textContent = quizSession.score;
-    document.getElementById("qTotal").textContent = quizSession.total;
+    elQScore.textContent = round.score;
     document.getElementById("qNext").disabled = false;
-    markLearned(answer.ch);
-    if (quizSession.score > state.bestScore) { state.bestScore = quizSession.score; saveState(); renderHome(); renderProgress(); }
+    markLearned(round.stage, answer.key);
   }
+
+  function endRound() {
+    round.finished = true;
+    const pct = Math.round((round.score / ROUND_LEN) * 100);
+    const ss = stageState(round.stage);
+    const prevBest = ss.bestPct;
+    if (pct > ss.bestPct) { ss.bestPct = pct; saveState(); }
+    renderHome(); renderProgress();
+
+    // 是否（首次）解鎖下一階段
+    const next = stageDef(round.stage + 1);
+    let unlockMsg = "";
+    if (next && next.unlockBy && next.unlockBy.stage === round.stage) {
+      const justUnlocked = prevBest < next.unlockBy.minPct && ss.bestPct >= next.unlockBy.minPct;
+      if (justUnlocked && hasContent(next.id)) unlockMsg = `🎉 達標！已解鎖 STAGE ${next.id}「${next.title}」`;
+      else if (justUnlocked && !hasContent(next.id)) unlockMsg = `🎉 達標！STAGE ${next.id} 內容建置中，敬請期待`;
+    }
+
+    const pass = pct >= UNLOCK_PCT;
+    quizPlay.style.display = "none";
+    quizResult.classList.add("show");
+    quizResult.innerHTML =
+      `<div class="qr-emoji">${pass ? "🏆" : pct >= 60 ? "👍" : "💪"}</div>` +
+      `<div class="qr-pct">${pct}<span>%</span></div>` +
+      `<div class="qr-sub">答對 ${round.score} / ${ROUND_LEN} 題</div>` +
+      (pass ? `<div class="qr-pass">達 ${UNLOCK_PCT}% 解鎖標準！</div>`
+            : `<div class="qr-fail">再練一下，達 ${UNLOCK_PCT}% 就能解鎖下一關</div>`) +
+      (unlockMsg ? `<div class="qr-unlock">${unlockMsg}</div>` : ``) +
+      `<div class="sheet-actions" style="margin-top:16px">` +
+      `<button class="btn btn-primary" id="qrAgain">再來一輪</button>` +
+      `<button class="btn btn-soft" id="qrHome">回關卡地圖</button></div>`;
+    document.getElementById("qrAgain").addEventListener("click", startRound);
+    document.getElementById("qrHome").addEventListener("click", () => showView("home"));
+  }
+
   document.getElementById("qNext").addEventListener("click", newQuestion);
-  document.getElementById("qReplay").addEventListener("click", () => quizSession.correct && speak(quizSession.correct.say, false));
+  document.getElementById("qReplay").addEventListener("click", () => round.item && speak(round.item.say, false));
   document.querySelectorAll(".mode-toggle .chip").forEach((c) => {
     c.addEventListener("click", () => {
       quizMode = c.dataset.mode;
       document.querySelectorAll(".mode-toggle .chip").forEach((x) => x.classList.toggle("active", x === c));
-      newQuestion();
+      startRound();
     });
   });
 
-  // ───────── 進度頁 ─────────
+  // ───────── 進度頁（總覽 + 各階段） ─────────
   function renderProgress() {
-    document.getElementById("stLearned").textContent = state.learned.length;
-    document.getElementById("stBest").textContent = state.bestScore;
+    document.getElementById("stLearned").textContent = totalLearned();
+    document.getElementById("stBest").textContent = bestPctAll() + "%";
     document.getElementById("stStreak").textContent = state.streak;
     document.getElementById("stMinutes").textContent = Math.floor(state.secondsToday / 60);
+
     const gp = document.getElementById("groupProgress");
     gp.innerHTML = "";
-    LETTER_GROUPS.forEach((g) => {
-      const done = g.letters.filter((l) => state.learned.includes(l.ch)).length;
-      const pct = Math.round((done / g.letters.length) * 100);
+    STAGES.forEach((s) => {
+      const content = hasContent(s.id);
+      const unlocked = isUnlocked(s.id);
+      const keys = stageItemKeys(s.id);
+      const learnedN = stageLearnedCount(s.id);
+      const pct = keys.length ? Math.round((learnedN / keys.length) * 100) : 0;
+      const ss = stageState(s.id);
       const row = document.createElement("div");
-      row.className = "gp-row";
+      row.className = "gp-row" + (unlocked ? "" : " dim");
+      const right = !unlocked ? "🔒 未解鎖"
+        : !content ? "建置中"
+        : `${learnedN} / ${keys.length}・測驗 ${ss.bestPct}%`;
       row.innerHTML =
-        `<div class="gp-top"><span>${g.title}</span><span>${done} / ${g.letters.length}</span></div>` +
-        `<div class="gp-bar"><i style="width:${pct}%"></i></div>`;
+        `<div class="gp-top"><span>STAGE ${s.id} · ${s.title}</span><span>${right}</span></div>` +
+        (unlocked && content ? `<div class="gp-bar"><i style="width:${pct}%"></i></div>` : ``);
       gp.appendChild(row);
     });
   }
   document.getElementById("resetBtn").addEventListener("click", () => {
     if (confirm("確定要清除所有進度嗎？")) {
-      state = { learned: [], bestScore: 0, streak: 0, lastActiveDate: null, secondsToday: 0, secondsDate: null };
+      state = blankState();
       saveState(); markActiveToday();
-      renderHome(); renderProgress(); renderLetterGrid();
+      renderStageContent(state.currentStage);
+      renderHome(); renderProgress(); renderTabbar();
+      showView("home");
     }
   });
 
@@ -359,7 +617,7 @@
     shTarget = composeSyllable(c, v) || "가";
   }
   if (!SR) {
-    document.getElementById("shadowBox").style.display = "none"; // 不支援就隱藏，不報錯
+    document.getElementById("shadowBox").style.display = "none";
   } else {
     document.getElementById("shPlay").addEventListener("click", () => {
       pickShadowTarget();
@@ -385,12 +643,13 @@
 
   // ───────── 初始化 ─────────
   markActiveToday();
-  renderHome();
-  renderTabs();
-  renderLetterGrid();
+  if (!isUnlocked(state.currentStage) || !hasContent(state.currentStage)) state.currentStage = 1;
+  renderStageContent(state.currentStage);
   buildJamoRow(comboConsEl, COMBO_CONSONANTS, "cons");
   buildJamoRow(comboVowEl, COMBO_VOWELS, "vow");
   updateCombo();
+  renderHome();
   renderProgress();
-  newQuestion();
+  renderTabbar();
+  showView("home");
 })();
