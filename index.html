@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#ff7eaa" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="韓文拼音" />
+  <title>한글 · 韓文拼音練習</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;500;700;900&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo">한</div>
+        <div>
+          <h1>韓文拼音練習</h1>
+          <small>HANGUL TRAINER</small>
+        </div>
+      </div>
+      <div class="voice-warn" id="voiceWarn">此裝置沒有韓語語音，發音暫不可用</div>
+    </header>
+
+    <!-- 首頁 / 進度 hero + 四組入口 -->
+    <section class="view active" id="view-home">
+      <div class="hero">
+        <div class="row">
+          <span class="big" id="homeMinutes">0</span>
+          <span class="lbl">分鐘 · 今天練習</span>
+        </div>
+        <div class="streak">🔥 連續 <span id="homeStreak">0</span> 天打卡</div>
+        <div class="progress-track"><div class="progress-fill" id="homeProgress" style="width:0%"></div></div>
+        <div class="progress-meta">
+          <span id="homeLearned">已學 0 / 40 字母</span>
+          <span id="homeBest">最佳測驗 0 分</span>
+        </div>
+      </div>
+
+      <h2 class="section-title">選一組開始練</h2>
+      <div class="group-grid" id="groupGrid"></div>
+    </section>
+
+    <!-- 字母學習 -->
+    <section class="view" id="view-letters">
+      <h2 class="section-title">字母卡</h2>
+      <p class="hint">點卡片聽發音。再點「慢速」放慢。</p>
+      <div class="tabs-mini" id="letterTabs"></div>
+      <div class="letter-grid" id="letterGrid"></div>
+    </section>
+
+    <!-- 組合練習 -->
+    <section class="view" id="view-combo">
+      <h2 class="section-title">組合字練習</h2>
+      <p class="hint">選一個子音 + 一個母音，組出音節並發音。</p>
+      <div class="combo-preview">
+        <div class="syl empty" id="comboSyl">？</div>
+        <div class="formula" id="comboFormula">選子音 + 母音</div>
+      </div>
+      <div class="sheet-actions">
+        <button class="btn btn-primary" id="comboSpeak" disabled>🔊 發音</button>
+        <button class="btn btn-soft" id="comboSlow" disabled>🐢 慢速</button>
+        <button class="btn btn-ghost" id="comboRandom">🎲 隨機出題</button>
+      </div>
+      <div class="combo-pick">
+        <h4>子音 (초성)</h4>
+        <div class="jamo-row" id="comboCons"></div>
+        <h4>母音 (중성)</h4>
+        <div class="jamo-row" id="comboVow"></div>
+      </div>
+    </section>
+
+    <!-- 測驗 -->
+    <section class="view" id="view-quiz">
+      <h2 class="section-title">隨機測驗</h2>
+      <div class="mode-toggle">
+        <button class="chip active" data-mode="see" id="modeSee">看字選音</button>
+        <button class="chip" data-mode="hear" id="modeHear">聽音選字</button>
+      </div>
+      <div class="quiz-card">
+        <div class="quiz-head">
+          <span>第 <span id="qNum">1</span> 題</span>
+          <span class="quiz-score">分數 <span id="qScore">0</span> / <span id="qTotal">0</span></span>
+        </div>
+        <div class="quiz-prompt" id="qPrompt">가</div>
+        <div class="quiz-sub" id="qSub">選出正確的羅馬拼音</div>
+        <div class="quiz-options" id="qOptions"></div>
+        <div class="quiz-feedback" id="qFeedback"></div>
+        <div class="sheet-actions" style="margin-top:14px">
+          <button class="btn btn-primary" id="qNext" disabled>下一題 →</button>
+          <button class="btn btn-soft" id="qReplay">🔊 再聽</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 進度 -->
+    <section class="view" id="view-progress">
+      <h2 class="section-title">學習進度</h2>
+      <div class="stat-grid">
+        <div class="stat"><div class="num" id="stLearned">0</div><div class="lbl">已學字母 / 40</div></div>
+        <div class="stat pink"><div class="num" id="stBest">0</div><div class="lbl">最佳測驗分數</div></div>
+        <div class="stat mint"><div class="num" id="stStreak">0</div><div class="lbl">連續打卡天數</div></div>
+        <div class="stat"><div class="num" id="stMinutes">0</div><div class="lbl">今日分鐘數</div></div>
+      </div>
+      <div class="group-progress" id="groupProgress"></div>
+
+      <div class="shadow-box" id="shadowBox">
+        <h4 style="margin:0 0 6px">跟讀練習 <small style="color:var(--ink-soft)">(加分)</small></h4>
+        <p class="hint" style="margin:0 0 10px">播放一個音節，跟著唸，看相似度。</p>
+        <div class="sheet-actions">
+          <button class="btn btn-primary" id="shPlay">🔊 播放</button>
+          <button class="btn btn-soft" id="shRec">🎤 跟讀</button>
+        </div>
+        <div class="res" id="shRes"></div>
+      </div>
+
+      <div class="reset-link"><button id="resetBtn">清除所有進度</button></div>
+    </section>
+  </div>
+
+  <!-- 字母詳情彈窗 -->
+  <div class="sheet-backdrop" id="sheet">
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="big-ch" id="sheetCh">ㅏ</div>
+      <div class="big-rom" id="sheetRom">a</div>
+      <div class="sheet-actions">
+        <button class="btn btn-primary" id="sheetSpeak">🔊 發音</button>
+        <button class="btn btn-soft" id="sheetSlow">🐢 慢速</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部導覽 -->
+  <nav class="tabbar" id="tabbar">
+    <button class="active" data-view="home"><span class="ic">🏠</span>首頁</button>
+    <button data-view="letters"><span class="ic">가</span>字母</button>
+    <button data-view="combo"><span class="ic">➕</span>組合</button>
+    <button data-view="quiz"><span class="ic">✏️</span>測驗</button>
+    <button data-view="progress"><span class="ic">📊</span>進度</button>
+  </nav>
+
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").catch((e) => console.warn("SW reg failed", e));
+      });
+    }
+  </script>
+</body>
+</html>
