@@ -162,7 +162,7 @@
       card.addEventListener("click", () => {
         card.classList.add("speaking");
         setTimeout(() => card.classList.remove("speaking"), 400);
-        speak(l.ch, false);
+        speak(l.say, false);
         markLearned(l.ch);
         openSheet(l);
       });
@@ -181,8 +181,8 @@
   }
   function closeSheet() { sheet.classList.remove("show"); }
   sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); });
-  document.getElementById("sheetSpeak").addEventListener("click", () => sheetLetter && speak(sheetLetter.ch, false));
-  document.getElementById("sheetSlow").addEventListener("click", () => sheetLetter && speak(sheetLetter.ch, true));
+  document.getElementById("sheetSpeak").addEventListener("click", () => sheetLetter && speak(sheetLetter.say, false));
+  document.getElementById("sheetSlow").addEventListener("click", () => sheetLetter && speak(sheetLetter.say, true));
 
   // ───────── 組合練習 ─────────
   const comboConsEl = document.getElementById("comboCons");
@@ -266,7 +266,7 @@
       qPrompt.textContent = answer.ch;
       qPrompt.style.fontSize = "84px";
       qSub.textContent = "選出正確的羅馬拼音";
-      speak(answer.ch, false);
+      speak(answer.say, false);
       options.forEach((o) => {
         const b = document.createElement("button");
         b.className = "opt"; b.textContent = o.rom;
@@ -277,7 +277,7 @@
       qPrompt.textContent = "🔊";
       qPrompt.style.fontSize = "60px";
       qSub.textContent = "聽發音，選出正確的字母";
-      speak(answer.ch, false);
+      speak(answer.say, false);
       options.forEach((o) => {
         const b = document.createElement("button");
         b.className = "opt"; b.textContent = o.ch; b.style.fontFamily = "var(--font-kr)";
@@ -313,7 +313,7 @@
     if (quizSession.score > state.bestScore) { state.bestScore = quizSession.score; saveState(); renderHome(); renderProgress(); }
   }
   document.getElementById("qNext").addEventListener("click", newQuestion);
-  document.getElementById("qReplay").addEventListener("click", () => quizSession.correct && speak(quizSession.correct.ch, false));
+  document.getElementById("qReplay").addEventListener("click", () => quizSession.correct && speak(quizSession.correct.say, false));
   document.querySelectorAll(".mode-toggle .chip").forEach((c) => {
     c.addEventListener("click", () => {
       quizMode = c.dataset.mode;

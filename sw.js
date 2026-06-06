@@ -1,5 +1,5 @@
 /* Service Worker — 離線快取 app shell */
-const CACHE = "hangul-pwa-v1";
+const CACHE = "hangul-pwa-v2";
 const ASSETS = [
   "./",
   "./index.html",

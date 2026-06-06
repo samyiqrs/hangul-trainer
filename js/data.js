@@ -1,5 +1,9 @@
 // 韓文字母權威清單 — 完全依照 SPEC §7，勿增刪、勿改拼音。
-// 羅馬拼音僅供對照；發音以 ko-KR TTS 為準。
+// ch = 字母本體（顯示用）；rom = 羅馬拼音對照；
+// say = 發音示範音節（TTS 用）。單一 jamo 丟給 speechSynthesis 會被唸成「字母名稱」
+//       (例 ㄴ→니은，兩個音)，故改唸合法音節示範「音值」：
+//       母音配無聲初聲 ㅇ（ㅏ→아）；子音配中性母音 ㅡ 凸顯音值（ㄴ→느）；
+//       ㅇ 特例唸「응」示範其收尾 ng 音。勿改這些 say 值（韓文事實）。
 
 const LETTER_GROUPS = [
   {
@@ -8,16 +12,16 @@ const LETTER_GROUPS = [
     subtitle: "Basic Vowels",
     count: 10,
     letters: [
-      { ch: "ㅏ", rom: "a" },
-      { ch: "ㅑ", rom: "ya" },
-      { ch: "ㅓ", rom: "eo" },
-      { ch: "ㅕ", rom: "yeo" },
-      { ch: "ㅗ", rom: "o" },
-      { ch: "ㅛ", rom: "yo" },
-      { ch: "ㅜ", rom: "u" },
-      { ch: "ㅠ", rom: "yu" },
-      { ch: "ㅡ", rom: "eu" },
-      { ch: "ㅣ", rom: "i" },
+      { ch: "ㅏ", rom: "a", say: "아" },
+      { ch: "ㅑ", rom: "ya", say: "야" },
+      { ch: "ㅓ", rom: "eo", say: "어" },
+      { ch: "ㅕ", rom: "yeo", say: "여" },
+      { ch: "ㅗ", rom: "o", say: "오" },
+      { ch: "ㅛ", rom: "yo", say: "요" },
+      { ch: "ㅜ", rom: "u", say: "우" },
+      { ch: "ㅠ", rom: "yu", say: "유" },
+      { ch: "ㅡ", rom: "eu", say: "으" },
+      { ch: "ㅣ", rom: "i", say: "이" },
     ],
   },
   {
@@ -26,20 +30,20 @@ const LETTER_GROUPS = [
     subtitle: "Basic Consonants",
     count: 14,
     letters: [
-      { ch: "ㄱ", rom: "g/k" },
-      { ch: "ㄴ", rom: "n" },
-      { ch: "ㄷ", rom: "d/t" },
-      { ch: "ㄹ", rom: "r/l" },
-      { ch: "ㅁ", rom: "m" },
-      { ch: "ㅂ", rom: "b/p" },
-      { ch: "ㅅ", rom: "s" },
-      { ch: "ㅇ", rom: "(無聲/收尾 ng)" },
-      { ch: "ㅈ", rom: "j" },
-      { ch: "ㅊ", rom: "ch" },
-      { ch: "ㅋ", rom: "k" },
-      { ch: "ㅌ", rom: "t" },
-      { ch: "ㅍ", rom: "p" },
-      { ch: "ㅎ", rom: "h" },
+      { ch: "ㄱ", rom: "g/k", say: "그" },
+      { ch: "ㄴ", rom: "n", say: "느" },
+      { ch: "ㄷ", rom: "d/t", say: "드" },
+      { ch: "ㄹ", rom: "r/l", say: "르" },
+      { ch: "ㅁ", rom: "m", say: "므" },
+      { ch: "ㅂ", rom: "b/p", say: "브" },
+      { ch: "ㅅ", rom: "s", say: "스" },
+      { ch: "ㅇ", rom: "(無聲/收尾 ng)", say: "응" },
+      { ch: "ㅈ", rom: "j", say: "즈" },
+      { ch: "ㅊ", rom: "ch", say: "츠" },
+      { ch: "ㅋ", rom: "k", say: "크" },
+      { ch: "ㅌ", rom: "t", say: "트" },
+      { ch: "ㅍ", rom: "p", say: "프" },
+      { ch: "ㅎ", rom: "h", say: "흐" },
     ],
   },
   {
@@ -48,11 +52,11 @@ const LETTER_GROUPS = [
     subtitle: "Double / Tense",
     count: 5,
     letters: [
-      { ch: "ㄲ", rom: "kk" },
-      { ch: "ㄸ", rom: "tt" },
-      { ch: "ㅃ", rom: "pp" },
-      { ch: "ㅆ", rom: "ss" },
-      { ch: "ㅉ", rom: "jj" },
+      { ch: "ㄲ", rom: "kk", say: "끄" },
+      { ch: "ㄸ", rom: "tt", say: "뜨" },
+      { ch: "ㅃ", rom: "pp", say: "쁘" },
+      { ch: "ㅆ", rom: "ss", say: "쓰" },
+      { ch: "ㅉ", rom: "jj", say: "쯔" },
     ],
   },
   {
@@ -61,17 +65,17 @@ const LETTER_GROUPS = [
     subtitle: "Compound Vowels",
     count: 11,
     letters: [
-      { ch: "ㅐ", rom: "ae" },
-      { ch: "ㅒ", rom: "yae" },
-      { ch: "ㅔ", rom: "e" },
-      { ch: "ㅖ", rom: "ye" },
-      { ch: "ㅘ", rom: "wa" },
-      { ch: "ㅙ", rom: "wae" },
-      { ch: "ㅚ", rom: "oe" },
-      { ch: "ㅝ", rom: "wo" },
-      { ch: "ㅞ", rom: "we" },
-      { ch: "ㅟ", rom: "wi" },
-      { ch: "ㅢ", rom: "ui" },
+      { ch: "ㅐ", rom: "ae", say: "애" },
+      { ch: "ㅒ", rom: "yae", say: "얘" },
+      { ch: "ㅔ", rom: "e", say: "에" },
+      { ch: "ㅖ", rom: "ye", say: "예" },
+      { ch: "ㅘ", rom: "wa", say: "와" },
+      { ch: "ㅙ", rom: "wae", say: "왜" },
+      { ch: "ㅚ", rom: "oe", say: "외" },
+      { ch: "ㅝ", rom: "wo", say: "워" },
+      { ch: "ㅞ", rom: "we", say: "웨" },
+      { ch: "ㅟ", rom: "wi", say: "위" },
+      { ch: "ㅢ", rom: "ui", say: "의" },
     ],
   },
 ];
