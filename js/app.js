@@ -184,6 +184,7 @@
   function renderStageContent(id) {
     if (id === 1) { renderTabs(); renderLetterGrid(); }
     else if (id === 2) { renderVocab(); renderNumbers(); }
+    else if (id === 3) { renderGrammar(); }
   }
 
   // ───────── 首頁：總覽 hero + 關卡地圖 ─────────
@@ -416,6 +417,39 @@
     renderNumberGrid(document.getElementById("numNative"), STAGE2.numbers.native.map((n) => ({ ...n, sys: "native" })));
   }
 
+  // ───────── Stage 3：文法 ─────────
+  const grammarList = document.getElementById("grammarList");
+  function renderGrammar() {
+    const learned = new Set(stageState(3).learned);
+    grammarList.innerHTML = "";
+    STAGE3.grammar.forEach((g) => {
+      const card = document.createElement("div");
+      card.className = "gram-card" + (learned.has(g.id) ? " learned" : "");
+      const exHtml = g.ex.map((e, i) =>
+        `<button class="gram-ex" data-i="${i}">` +
+        `<span class="ge-ko">${e.ko}</span>` +
+        `<span class="ge-zh">${e.zh}</span>` +
+        `<span class="ge-rom">${e.rom}</span>` +
+        `<span class="ge-play">🔊</span></button>`
+      ).join("");
+      card.innerHTML =
+        `<div class="gram-title">${g.title}</div>` +
+        `<div class="gram-point">${g.point}</div>` +
+        `<div class="gram-ex-list">${exHtml}</div>`;
+      card.querySelectorAll(".gram-ex").forEach((b) => {
+        b.addEventListener("click", () => {
+          const e = g.ex[Number(b.dataset.i)];
+          b.classList.add("speaking");
+          setTimeout(() => b.classList.remove("speaking"), 400);
+          speak(e.say, false);
+          markLearned(3, g.id);
+          card.classList.add("learned");
+        });
+      });
+      grammarList.appendChild(card);
+    });
+  }
+
   // ───────── 測驗（依當前階段，每輪 10 題，達標解鎖下一階） ─────────
   const ROUND_LEN = 10;
   let quizMode = "see"; // see = 看字選意/音, hear = 聽音選字
@@ -450,32 +484,47 @@
     return out;
   }
 
+  function buildQueue(stage) {
+    const def = stageDef(stage);
+    const pool = def.quizType === "choice" ? (QUIZ_CHOICE[stage] || []) : (QUIZ_ITEMS[stage] || []);
+    return shuffle(pool).slice(0, Math.min(ROUND_LEN, pool.length));
+  }
+
   function startRound() {
-    round = { stage: state.currentStage, n: 0, score: 0, item: null, answered: false, finished: false };
-    const def = stageDef(round.stage);
+    const stage = state.currentStage;
+    const def = stageDef(stage);
+    const isChoice = def.quizType === "choice";
+    round = { stage, type: def.quizType, queue: buildQueue(stage), n: 0, score: 0, item: null, answered: false, finished: false, len: 0 };
+    round.len = round.queue.length;
     elQStageLabel.textContent = `STAGE ${def.id} · ${def.title}`;
-    // 模式按鈕文字依階段微調
-    document.getElementById("modeSee").textContent = round.stage === 1 ? "看字選音" : "看字選意";
+    document.getElementById("modeSee").textContent = stage === 1 ? "看字選音" : "看字選意";
+    document.querySelector(".mode-toggle").style.display = isChoice ? "none" : "flex";
+    if (isChoice) quizMode = "see";
     quizResult.classList.remove("show");
     quizPlay.style.display = "";
-    elQLen.textContent = ROUND_LEN;
+    elQLen.textContent = round.len;
     newQuestion();
   }
 
   function newQuestion() {
-    if (round.n >= ROUND_LEN) return endRound();
+    if (round.n >= round.len) return endRound();
     round.answered = false;
     document.getElementById("qNext").disabled = true;
     elQFeedback.textContent = "";
     elQFeedback.className = "quiz-feedback";
+    const item = round.queue[round.n];
+    round.item = item;
+    elQOptions.innerHTML = "";
+    if (round.type === "choice") renderChoiceQuestion(item);
+    else renderMatchQuestion(item);
+    elQNum.textContent = round.n + 1;
+    elQScore.textContent = round.score;
+  }
 
+  function renderMatchQuestion(answer) {
     const items = QUIZ_ITEMS[round.stage];
-    const answer = items[Math.floor(Math.random() * items.length)];
-    round.item = answer;
     const distractors = pickDistractors(items.filter((l) => l.key !== answer.key), answer, quizMode);
     const options = shuffle([answer, ...distractors]);
-
-    elQOptions.innerHTML = "";
     if (quizMode === "see") {
       elQPrompt.textContent = answer.ch;
       elQPrompt.style.fontSize = round.stage === 1 ? "84px" : "clamp(34px, 11vw, 52px)";
@@ -485,7 +534,7 @@
         const b = document.createElement("button");
         b.className = "opt"; b.textContent = o.ans;
         if (round.stage === 1) b.style.fontSize = "18px";
-        b.addEventListener("click", () => answerQuestion(b, o, answer, elQOptions));
+        b.addEventListener("click", () => answerMatch(b, o, answer));
         elQOptions.appendChild(b);
       });
     } else {
@@ -496,15 +545,25 @@
       options.forEach((o) => {
         const b = document.createElement("button");
         b.className = "opt"; b.textContent = o.ch; b.style.fontFamily = "var(--font-kr)";
-        b.addEventListener("click", () => answerQuestion(b, o, answer, elQOptions));
+        b.addEventListener("click", () => answerMatch(b, o, answer));
         elQOptions.appendChild(b);
       });
     }
-    elQNum.textContent = round.n + 1;
-    elQScore.textContent = round.score;
   }
 
-  function answerQuestion(btn, chosen, answer, container) {
+  function renderChoiceQuestion(item) {
+    elQPrompt.textContent = item.prompt;
+    elQPrompt.style.fontSize = "clamp(22px, 6.5vw, 30px)";
+    elQSub.textContent = item.hint;
+    shuffle(item.options).forEach((opt) => {
+      const b = document.createElement("button");
+      b.className = "opt"; b.textContent = opt; b.style.fontFamily = "var(--font-kr)"; b.style.fontSize = "20px";
+      b.addEventListener("click", () => answerChoice(b, opt, item));
+      elQOptions.appendChild(b);
+    });
+  }
+
+  function answerMatch(btn, chosen, answer) {
     if (round.answered) return;
     round.answered = true;
     round.n += 1;
@@ -516,19 +575,38 @@
     } else {
       btn.classList.add("wrong");
       elQFeedback.textContent = `答案是 ${answer.ch}（${answer.ans}）`; elQFeedback.className = "quiz-feedback no";
-      [...container.children].forEach((c) => {
-        if (c.textContent === disp(answer, quizMode)) c.classList.add("correct");
-      });
+      [...elQOptions.children].forEach((c) => { if (c.textContent === disp(answer, quizMode)) c.classList.add("correct"); });
     }
-    [...container.children].forEach((c) => (c.disabled = true));
+    [...elQOptions.children].forEach((c) => (c.disabled = true));
     elQScore.textContent = round.score;
     document.getElementById("qNext").disabled = false;
     markLearned(round.stage, answer.key);
   }
 
+  function answerChoice(btn, opt, item) {
+    if (round.answered) return;
+    round.answered = true;
+    round.n += 1;
+    const correct = opt === item.answer;
+    if (correct) {
+      btn.classList.add("correct");
+      round.score += 1;
+      elQFeedback.textContent = `答對了！ 🎉 ${item.explain}`; elQFeedback.className = "quiz-feedback ok";
+    } else {
+      btn.classList.add("wrong");
+      elQFeedback.textContent = `正解：${item.answer}　${item.explain}`; elQFeedback.className = "quiz-feedback no";
+      [...elQOptions.children].forEach((c) => { if (c.textContent === item.answer) c.classList.add("correct"); });
+    }
+    [...elQOptions.children].forEach((c) => (c.disabled = true));
+    elQScore.textContent = round.score;
+    document.getElementById("qNext").disabled = false;
+    speak(item.say, false);
+    markLearned(round.stage, item.key);
+  }
+
   function endRound() {
     round.finished = true;
-    const pct = Math.round((round.score / ROUND_LEN) * 100);
+    const pct = round.len ? Math.round((round.score / round.len) * 100) : 0;
     const ss = stageState(round.stage);
     const prevBest = ss.bestPct;
     if (pct > ss.bestPct) { ss.bestPct = pct; saveState(); }
