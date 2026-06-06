@@ -412,16 +412,5 @@ button, .tap { touch-action: manipulation; }
 
 .gp-row.dim { opacity: .6; }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1d1a26; --bg-grad-1: #2a2238; --bg-grad-2: #221f33;
-    --card: #2a2636; --ink: #f1ecf7; --ink-soft: #a59cb8;
-    --pink-soft: #3a2a37; --lav-soft: #2f2b46;
-    --shadow: 0 10px 28px -14px rgba(0,0,0,.6);
-  }
-  .hero { background: linear-gradient(135deg, #2a2636 0%, #2f2b46 100%); }
-  .chip, .opt, .jamo, .group-card, .stat, .gp-row, .letter-card { background: var(--card); }
-  .sheet { background: var(--card); }
-  .tabbar { background: rgba(29,26,38,.92); border-top-color: #34304a; }
-  .opt.correct { background: #1e3a30; } .opt.wrong { background: #3a1e26; }
-}
+/* 永遠維持清新明亮風 — 不跟隨系統深色模式 */
+:root { color-scheme: light; }
